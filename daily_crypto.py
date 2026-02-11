@@ -6,7 +6,8 @@ from telegram import Bot
 
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
-SWYFTX_API_KEY = "VFYGZCDPG-f4ZXWzr6g0fKE9x2Z6nNPbbDSu_Ub7cjI1x"
+SWYFTX_API_KEY = os.getenv('SWYFTX_API_KEY', '')
+
 
 # Coin mapping: Swyftx ID -> CoinGecko ID
 COIN_MAP = {
