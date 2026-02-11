@@ -6,9 +6,11 @@ from telegram import Bot
 
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
-SWYFTX_API_KEY = os.getenv('SWYFTX_API_KEY', '')
 
-# Asset ID to name mapping (update with your coins)
+# Your new admin API key (hardcoded for testing)
+SWYFTX_API_KEY = "VFYGZCDPG-f4ZXWzr6g0fKE9x2Z6nNPbbDSu_Ub7cjI1x"
+
+# Asset ID to name mapping
 ASSET_MAP = {
     1: 'BTC', 2: 'ETH', 3: 'XRP', 5: 'LTC', 6: 'ADA', 
     10: 'SOL', 12: 'DOGE', 73: 'SUI', 130: 'LUNA', 
@@ -22,36 +24,56 @@ async def send_daily_update():
     message = f"📊 Daily Crypto Update\n"
     message += f"⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
     
-    # Get Swyftx data
+    # Get Swyftx token
     auth_response = requests.post(
         "https://api.swyftx.com.au/auth/refresh/",
         json={"apiKey": SWYFTX_API_KEY},
         headers={"Content-Type": "application/json"},
         timeout=10
     )
+    
+    if auth_response.status_code != 200:
+        message += f"❌ Auth failed: {auth_response.status_code}\n"
+        message += f"Response: {auth_response.text[:200]}"
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        return
+    
     token = auth_response.json().get("accessToken")
     
+    # Get balances
     balance_response = requests.get(
         "https://api.swyftx.com.au/user/balance/",
         headers={"Authorization": f"Bearer {token}"},
         timeout=10
     )
+    
+    if balance_response.status_code != 200:
+        message += f"❌ Balance fetch failed: {balance_response.status_code}"
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        return
+    
     balances = balance_response.json()
     
-    # Get CoinGecko prices
-    coins = ['bitcoin', 'ethereum', 'solana', 'ripple', 'cardano', 'dogecoin',
-             'litecoin', 'sui', 'terra-luna', 'ethena', 'usd-coin', 'nexo',
-             'polygon-ecosystem-token', 'tether-gold', 'tezos']
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(coins)}&vs_currencies=aud"
-    prices = requests.get(url, timeout=10).json()
-    
-    # Map CoinGecko IDs
-    CG_MAP = {
-        'BTC': 'bitcoin', 'ETH': 'ethereum', 'SOL': 'solana', 'XRP': 'ripple',
-        'ADA': 'cardano', 'DOGE': 'dogecoin', 'LTC': 'litecoin', 'SUI': 'sui',
-        'LUNA': 'terra-luna', 'ENA': 'ethena', 'USDC': 'usd-coin', 'NEXO': 'nexo',
-        'POL': 'polygon-ecosystem-token', 'XAUT': 'tether-gold', 'XTZ': 'tezos'
-    }
+    # Get prices from Swyftx
+    prices = {}
+    try:
+        rates_response = requests.get(
+            "https://api.swyftx.com.au/markets/live-rates/AUD/",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if rates_response.status_code == 200:
+            rates_data = rates_response.json()
+            # Parse rates
+            if isinstance(rates_data, list):
+                for item in rates_data:
+                    if isinstance(item, dict):
+                        asset_id = item.get('assetId')
+                        rate = item.get('rate')
+                        if asset_id and rate:
+                            prices[asset_id] = float(rate)
+    except Exception as e:
+        message += f"Price fetch error: {e}\n"
     
     # Calculate portfolio
     total_aud = 0
@@ -63,12 +85,11 @@ async def send_daily_update():
         
         if balance > 0:
             name = ASSET_MAP.get(asset_id, f"ID_{asset_id}")
-            cg_id = CG_MAP.get(name)
             
+            # Get price from Swyftx
             aud_value = 0
-            if cg_id and cg_id in prices:
-                price = prices[cg_id]['aud']
-                aud_value = balance * price
+            if asset_id in prices:
+                aud_value = balance * prices[asset_id]
             
             total_aud += aud_value
             holdings.append((name, balance, aud_value))
@@ -76,9 +97,9 @@ async def send_daily_update():
     # Sort by value
     holdings.sort(key=lambda x: x[2], reverse=True)
     
-    # Display top 10
-    message += "💰 Your Portfolio:\n\n"
-    for name, qty, value in holdings[:10]:
+    # Display
+    message += "💰 Your Swyftx Portfolio:\n\n"
+    for name, qty, value in holdings[:15]:
         if value > 1000:
             value_str = f"${value:,.0f}"
         elif value > 1:
@@ -95,15 +116,8 @@ async def send_daily_update():
         
         message += f"• {name}: {qty_str} ({value_str})\n"
     
-    message += f"\n💵 Total: ${total_aud:,.2f} AUD\n\n"
-    
-    # Market prices
-    message += "📈 Market Prices:\n"
-    for symbol, cg_id in [('BTC', 'bitcoin'), ('ETH', 'ethereum'), ('SOL', 'solana'), 
-                          ('XRP', 'ripple'), ('ADA', 'cardano')]:
-        if cg_id in prices:
-            price = prices[cg_id]['aud']
-            message += f"• {symbol}: ${price:,.2f}\n"
+    message += f"\n💵 Total Value: ${total_aud:,.2f} AUD\n"
+    message += f"📊 Assets: {len(holdings)} coins"
     
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
