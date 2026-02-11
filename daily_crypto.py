@@ -4,52 +4,52 @@ import asyncio
 from datetime import datetime
 from telegram import Bot
 
-COINS = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOT', 'MATIC', 'LINK', 'UNI', 'LTC',
-         'BCH', 'ETC', 'XLM', 'VET', 'FIL', 'TRX', 'EOS', 'AAVE', 'ATOM', 'XTZ']
-
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-SWYFTX_API_KEY = os.getenv('SWYFTX_API_KEY', '').strip()
 
 async def send_daily_update():
     bot = Bot(token=TELEGRAM_TOKEN)
     
-    # Try to get prices from public endpoint
-    prices = {}
+    # Debug: Try to fetch data
+    debug_info = []
+    
+    # Try 1: Basic request
     try:
         response = requests.get("https://api.swyftx.com.au/markets/live-rates/AUD/", timeout=10)
+        debug_info.append(f"Status: {response.status_code}")
+        debug_info.append(f"Content-Type: {response.headers.get('content-type', 'unknown')}")
+        debug_info.append(f"Length: {len(response.text)}")
+        
         if response.status_code == 200:
             data = response.json()
-            # Handle different response formats
+            debug_info.append(f"Type: {type(data)}")
+            
             if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        coin = item.get('asset') or item.get('code')
-                        if coin and coin.upper() in COINS:
-                            prices[coin.upper()] = {
-                                'price': item.get('rate') or item.get('price') or 0,
-                                'change': item.get('change24hPercent') or item.get('change24h') or 0
-                            }
+                debug_info.append(f"Items: {len(data)}")
+                if len(data) > 0:
+                    debug_info.append(f"First item: {str(data[0])[:100]}")
+                    # Try to extract prices
+                    coins = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA']
+                    prices = []
+                    for item in data:
+                        if isinstance(item, dict):
+                            asset = item.get('asset') or item.get('code') or item.get('symbol')
+                            rate = item.get('rate') or item.get('price')
+                            if asset and rate:
+                                prices.append(f"{asset}: ${rate}")
+                    debug_info.append(f"Found prices: {len(prices)}")
+                    if prices:
+                        debug_info.append("Sample: " + ", ".join(prices[:3]))
+            elif isinstance(data, dict):
+                debug_info.append(f"Keys: {list(data.keys())[:5]}")
+        else:
+            debug_info.append(f"Error: {response.text[:200]}")
     except Exception as e:
-        print(f"Error fetching prices: {e}")
+        debug_info.append(f"Exception: {str(e)}")
     
     # Build message
-    message = f"📊 *Daily Crypto Update*\n⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
-    
-    if prices:
-        message += "*Market Prices (AUD):*\n"
-        for coin in sorted(prices.keys()):
-            p = prices[coin]
-            emoji = "🟢" if float(p['change']) >= 0 else "🔴"
-            price = float(p['price'])
-            if price > 1000:
-                price_str = f"${price:,.2f}"
-            else:
-                price_str = f"${price:.2f}"
-            message += f"{emoji} *{coin}*: {price_str} ({float(p['change']):+.2f}%)\n"
-        message += f"\n📈 {len(prices)} coins"
-    else:
-        message += "❌ Could not fetch prices"
+    message = f"📊 *Debug Info*\n⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
+    message += "\n".join(debug_info)
     
     await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='Markdown')
 
