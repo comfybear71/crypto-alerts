@@ -16,5 +16,6 @@ jobs:
       - run: pip install python-telegram-bot requests
       - run: python daily_crypto.py
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SWYFTX_API_KEY: ${{ secrets.SWYFTX_API_KEY }}
