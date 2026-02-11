@@ -8,30 +8,8 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 SWYFTX_API_KEY = "VFYGZCDPG-f4ZXWzr6g0fKE9x2Z6nNPbbDSu_Ub7cjI1x"
 
-# CORRECTED Asset ID mapping based on your actual wallet
-ASSET_MAP = {
-    1: 'AUD',      # Australian Dollars
-    2: 'BTC',      # Bitcoin
-    3: 'XAUT',     # Tether Gold
-    4: 'ETH',      # Ethereum
-    5: 'SOL',      # Solana
-    6: 'SUI',      # Sui
-    7: 'XRP',      # Ripple
-    8: 'LUNA',     # Terra
-    9: 'ENA',      # Ethena
-    10: 'USDC',    # USD Coin
-    11: 'ADA',     # Cardano
-    12: 'NEXO',    # Nexo
-    13: 'POL',     # Polygon
-    14: 'DOGE',    # Dogecoin
-    # Add more if needed
-}
-
 async def send_daily_update():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    
-    message = f"📊 Daily Crypto Update\n"
-    message += f"⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
     
     # Get Swyftx token
     auth_response = requests.post(
@@ -41,21 +19,40 @@ async def send_daily_update():
         timeout=10
     )
     token = auth_response.json().get("accessToken")
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # First, fetch all assets to get ID-to-name mapping
+    assets_response = requests.get(
+        "https://api.swyftx.com.au/markets/assets/",
+        headers=headers,
+        timeout=10
+    )
+    
+    # Build ID to name mapping from API
+    asset_map = {}
+    if assets_response.status_code == 200:
+        assets = assets_response.json()
+        for asset in assets:
+            if isinstance(asset, dict):
+                asset_id = asset.get('id') or asset.get('assetId')
+                code = asset.get('code') or asset.get('asset') or asset.get('symbol')
+                if asset_id and code:
+                    asset_map[asset_id] = code
     
     # Get balances
     balance_response = requests.get(
         "https://api.swyftx.com.au/user/balance/",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=headers,
         timeout=10
     )
     balances = balance_response.json()
     
-    # Get prices from Swyftx
+    # Get prices
     prices = {}
     try:
         rates_response = requests.get(
             "https://api.swyftx.com.au/markets/live-rates/AUD/",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
             timeout=10
         )
         if rates_response.status_code == 200:
@@ -70,6 +67,16 @@ async def send_daily_update():
     except Exception as e:
         print(f"Price error: {e}")
     
+    # Build message
+    message = f"📊 Daily Crypto Update\n"
+    message += f"⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
+    
+    # Show first 10 asset mappings for debugging
+    message += "Asset ID Mapping (first 10):\n"
+    for i, (aid, code) in enumerate(list(asset_map.items())[:10]):
+        message += f"ID {aid}: {code}\n"
+    message += "\n"
+    
     # Calculate portfolio
     total_aud = 0
     holdings = []
@@ -79,22 +86,21 @@ async def send_daily_update():
         balance = float(item.get('availableBalance', 0))
         
         if balance > 0:
-            name = ASSET_MAP.get(asset_id, f"ID_{asset_id}")
+            name = asset_map.get(asset_id, f"ID_{asset_id}")
             
-            # Get price
             aud_value = 0
             if asset_id in prices:
                 aud_value = balance * prices[asset_id]
             
             total_aud += aud_value
-            holdings.append((name, balance, aud_value))
+            holdings.append((name, balance, aud_value, asset_id))
     
     # Sort by value
     holdings.sort(key=lambda x: x[2], reverse=True)
     
     # Display
-    message += "💰 Your Swyftx Portfolio:\n\n"
-    for name, qty, value in holdings:
+    message += "💰 Your Portfolio:\n\n"
+    for name, qty, value, aid in holdings[:15]:
         if value > 1000:
             value_str = f"${value:,.0f}"
         elif value > 1:
@@ -102,7 +108,6 @@ async def send_daily_update():
         else:
             value_str = f"${value:.4f}"
         
-        # Format quantity
         if qty < 0.01:
             qty_str = f"{qty:.8f}"
         elif qty < 1:
@@ -112,9 +117,9 @@ async def send_daily_update():
         else:
             qty_str = f"{qty:.0f}"
         
-        message += f"• {name}: {qty_str} ({value_str})\n"
+        message += f"• {name} (ID:{aid}): {qty_str} ({value_str})\n"
     
-    message += f"\n💵 Total Value: ${total_aud:,.2f} AUD"
+    message += f"\n💵 Total: ${total_aud:,.2f} AUD"
     
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
