@@ -8,63 +8,112 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 SWYFTX_API_KEY = "VFYGZCDPG-f4ZXWzr6g0fKE9x2Z6nNPbbDSu_Ub7cjI1x"
 
+# Coin mapping: Swyftx ID -> CoinGecko ID
+COIN_MAP = {
+    1: ('AUD', 'aud', 1.0),  # AUD is always 1.0
+    3: ('BTC', 'bitcoin', None),
+    5: ('ETH', 'ethereum', None),
+    6: ('XRP', 'ripple', None),
+    12: ('ADA', 'cardano', None),
+    36: ('USD', 'usd', 1.0),  # USD approx
+    53: ('USDC', 'usd-coin', None),
+    73: ('DOGE', 'dogecoin', None),
+    130: ('SOL', 'solana', None),
+    405: ('LUNA', 'terra-luna', None),
+    407: ('NEXO', 'nexo', None),
+    438: ('SUI', 'sui', None),
+    496: ('ENA', 'ethena', None),
+    569: ('POL', 'polygon-ecosystem-token', None),
+    635: ('XAUT', 'tether-gold', None),
+}
+
 async def send_daily_update():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     
-    # Step 1: Authenticate (get fresh token)
-    auth_url = "https://api.swyftx.com.au/auth/refresh/"
-    auth_response = requests.post(
-        auth_url,
+    # Authenticate with Swyftx
+    auth = requests.post(
+        "https://api.swyftx.com.au/auth/refresh/",
         json={"apiKey": SWYFTX_API_KEY},
         headers={"Content-Type": "application/json"},
         timeout=10
     )
-    
-    if auth_response.status_code != 200:
-        await bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID, 
-            text=f"Auth failed: {auth_response.status_code}"
-        )
-        return
-    
-    token = auth_response.json().get("accessToken")
+    token = auth.json().get("accessToken")
     headers = {"Authorization": f"Bearer {token}"}
     
+    # Get balances from Swyftx
+    balances_resp = requests.get(
+        "https://api.swyftx.com.au/user/balance/",
+        headers=headers,
+        timeout=10
+    )
+    balances = {b['assetId']: float(b['availableBalance']) for b in balances_resp.json() if float(b['availableBalance']) > 0}
+    
+    # Get prices from CoinGecko
+    cg_ids = [COIN_MAP[k][1] for k in balances.keys() if k in COIN_MAP and COIN_MAP[k][2] is None]
+    prices = {}
+    
+    if cg_ids:
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(cg_ids)}&vs_currencies=aud&include_24hr_change=true"
+        cg_data = requests.get(url, timeout=10).json()
+        
+        for asset_id, (code, cg_id, fixed_price) in COIN_MAP.items():
+            if fixed_price:
+                prices[asset_id] = {'price': fixed_price, 'change': 0}
+            elif cg_id in cg_data:
+                prices[asset_id] = {
+                    'price': cg_data[cg_id]['aud'],
+                    'change': cg_data[cg_id].get('aud_24h_change', 0)
+                }
+    
+    # Calculate portfolio
+    total_aud = 0
+    holdings = []
+    
+    for asset_id, balance in balances.items():
+        if asset_id in COIN_MAP and asset_id in prices:
+            code, _, _ = COIN_MAP[asset_id]
+            value = balance * prices[asset_id]['price']
+            change = prices[asset_id]['change']
+            total_aud += value
+            holdings.append((code, balance, value, change))
+    
+    # Sort by value
+    holdings.sort(key=lambda x: x[2], reverse=True)
+    
+    # Build message
     message = f"📊 Swyftx Portfolio\n"
     message += f"⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
     
-    # Step 2: Get portfolio (like swyftx-cli portfolio)
-    try:
-        portfolio_url = "https://api.swyftx.com.au/portfolio/"
-        portfolio_resp = requests.get(portfolio_url, headers=headers, timeout=10)
-        message += f"Portfolio endpoint: {portfolio_resp.status_code}\n"
+    for code, qty, value, change in holdings:
+        emoji = "🟢" if change >= 0 else "🔴"
         
-        if portfolio_resp.status_code == 200:
-            portfolio_data = portfolio_resp.json()
-            message += f"Portfolio keys: {list(portfolio_data.keys())}\n"
-            message += f"Data: {str(portfolio_data)[:500]}\n\n"
+        # Format quantity
+        if qty < 0.01:
+            qty_str = f"{qty:.8f}"
+        elif qty < 1:
+            qty_str = f"{qty:.6f}"
+        elif qty < 1000:
+            qty_str = f"{qty:.2f}"
         else:
-            message += f"Portfolio error: {portfolio_resp.text[:200]}\n\n"
-    except Exception as e:
-        message += f"Portfolio exception: {str(e)}\n\n"
-    
-    # Step 3: Try markets endpoint (like swyftx-cli markets)
-    try:
-        markets_url = "https://api.swyftx.com.au/markets/assets/"
-        markets_resp = requests.get(markets_url, headers=headers, timeout=10)
-        message += f"Markets assets: {markets_resp.status_code}\n"
+            qty_str = f"{qty:.0f}"
         
-        if markets_resp.status_code == 200:
-            assets = markets_resp.json()
-            message += f"Total assets: {len(assets)}\n"
-            
-            # Find BTC (ID 3)
-            for asset in assets:
-                if isinstance(asset, dict) and asset.get('id') == 3:
-                    message += f"BTC data: {str(asset)[:400]}\n"
-                    break
-    except Exception as e:
-        message += f"Markets error: {str(e)}\n"
+        # Format value
+        if value > 1000:
+            value_str = f"${value:,.0f}"
+        elif value > 1:
+            value_str = f"${value:.2f}"
+        else:
+            value_str = f"${value:.4f}"
+        
+        message += f"{emoji} {code}: {qty_str} ({value_str}) {change:+.2f}%\n"
+    
+    # Portfolio summary
+    total_change = sum(h[2] * h[3] / 100 for h in holdings)
+    portfolio_change_pct = (total_change / total_aud * 100) if total_aud > 0 else 0
+    portfolio_emoji = "🟢" if portfolio_change_pct >= 0 else "🔴"
+    
+    message += f"\n💵 Total: ${total_aud:,.2f} AUD"
+    message += f"\n📈 24h: {portfolio_emoji} {portfolio_change_pct:+.2f}%"
     
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
