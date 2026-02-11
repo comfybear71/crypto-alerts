@@ -9,7 +9,7 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 SWYFTX_API_KEY = os.getenv('SWYFTX_API_KEY', '')
 
-# Coin mapping: Swyftx ID -> (Code, CoinGecko ID, Fixed Price)
+# Coin mapping
 COIN_MAP = {
     1: ('AUD', 'aud', 1.0),
     3: ('BTC', 'bitcoin', None),
@@ -29,8 +29,8 @@ COIN_MAP = {
 }
 
 async def get_portfolio_data():
-    """Fetch portfolio data from Swyftx and CoinGecko"""
-    # Authenticate with Swyftx
+    """Fetch portfolio from Swyftx + CoinGecko prices"""
+    # Swyftx auth
     auth = requests.post(
         "https://api.swyftx.com.au/auth/refresh/",
         json={"apiKey": SWYFTX_API_KEY},
@@ -40,7 +40,7 @@ async def get_portfolio_data():
     token = auth.json().get("accessToken")
     headers = {"Authorization": f"Bearer {token}"}
     
-    # Get balances from Swyftx
+    # Get balances
     balances_resp = requests.get(
         "https://api.swyftx.com.au/user/balance/",
         headers=headers,
@@ -68,7 +68,7 @@ async def get_portfolio_data():
                     'change': cg_data[cg_id].get('aud_24h_change', 0)
                 }
     
-    # Calculate portfolio
+    # Calculate
     total_aud = 0
     holdings = []
     
@@ -80,26 +80,23 @@ async def get_portfolio_data():
             total_aud += value
             holdings.append((code, balance, value, change))
     
-    # Sort by value
     holdings.sort(key=lambda x: x[2], reverse=True)
-    
     return holdings, total_aud
 
 async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /portfolio command"""
-    await update.message.reply_text("⏳ Fetching your portfolio...")
+    await update.message.reply_text("⏳ Fetching portfolio...")
     
     try:
         holdings, total_aud = await get_portfolio_data()
         
-        # Build message
         message = f"📊 Your Swyftx Portfolio\n"
         message += f"⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
         
         for code, qty, value, change in holdings:
             emoji = "🟢" if change >= 0 else "🔴"
             
-            # Format quantity
+            # Format
             if qty < 0.01:
                 qty_str = f"{qty:.8f}"
             elif qty < 1:
@@ -109,7 +106,6 @@ async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 qty_str = f"{qty:.0f}"
             
-            # Format value
             if value > 1000:
                 value_str = f"${value:,.0f}"
             elif value > 1:
@@ -119,7 +115,7 @@ async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             message += f"{emoji} {code}: {qty_str} ({value_str}) {change:+.2f}%\n"
         
-        # Portfolio summary
+        # Summary
         total_change = sum(h[2] * h[3] / 100 for h in holdings)
         portfolio_change_pct = (total_change / total_aud * 100) if total_aud > 0 else 0
         portfolio_emoji = "🟢" if portfolio_change_pct >= 0 else "🔴"
@@ -137,11 +133,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = """
 🤖 Swyftx Portfolio Bot
 
-Available commands:
-/portfolio - Get your current portfolio
-/help - Show this help message
+Commands:
+/portfolio - Get your portfolio
+/help - Show help
 
-The bot will also send daily updates at 6 AM UTC.
+Daily updates at 6 AM UTC
     """
     await update.message.reply_text(message)
 
@@ -150,15 +146,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_command(update, context)
 
 def main():
-    """Start the bot"""
+    """Start bot with command handlers"""
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
-    # Add command handlers
+    # Commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("portfolio", portfolio_command))
     
-    # Start the bot
+    # Start
     application.run_polling()
 
 if __name__ == "__main__":
