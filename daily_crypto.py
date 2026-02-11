@@ -9,24 +9,37 @@ COINS = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOT', 'MATIC', 'LINK', 'UNI', 'LTC'
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-SWYFTX_TOKEN = os.getenv('SWYFTX_ACCESS_TOKEN', '').strip()
+SWYFTX_API_KEY = os.getenv('SWYFTX_API_KEY', '').strip()
+
+async def get_token():
+    """Generate access token from API key"""
+    if not SWYFTX_API_KEY:
+        return None
+    url = "https://api.swyftx.com.au/auth/refresh/"
+    try:
+        response = requests.post(url, json={"apiKey": SWYFTX_API_KEY}, timeout=10)
+        if response.status_code == 200:
+            return response.json().get("accessToken")
+    except Exception as e:
+        print(f"Auth error: {e}")
+    return None
 
 async def send_daily_update():
     bot = Bot(token=TELEGRAM_TOKEN)
     
-    # Get portfolio using access token
+    # Get fresh token and portfolio
+    token = await get_token()
     portfolio = None
-    if SWYFTX_TOKEN:
-        url = "https://api.swyftx.com.au/portfolio/balance/"
-        headers = {"Authorization": f"Bearer {SWYFTX_TOKEN}"}
+    if token:
+        headers = {"Authorization": f"Bearer {token}"}
         try:
-            response = requests.get(url, headers=headers, timeout=10)
+            response = requests.get("https://api.swyftx.com.au/portfolio/balance/", headers=headers, timeout=10)
             if response.status_code == 200:
                 portfolio = response.json()
         except Exception as e:
             print(f"Portfolio error: {e}")
     
-    # Get prices (public)
+    # Get prices
     rates_data = None
     try:
         response = requests.get("https://api.swyftx.com.au/markets/live-rates/AUD/", timeout=10)
@@ -38,7 +51,6 @@ async def send_daily_update():
     # Build message
     message = f"📊 *Daily Crypto Update*\n⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
     
-    # Portfolio
     if portfolio:
         message += "💰 *Your Portfolio*\n"
         total = portfolio.get('totalAudBalance', 0)
@@ -56,7 +68,7 @@ async def send_daily_update():
                     message += f"• {asset}: {qty:.4f}\n"
             message += "\n"
     else:
-        message += "⚠️ *Portfolio not available*\n\n"
+        message += "⚠️ *Portfolio unavailable*\n\n"
     
     # Prices
     if rates_data and isinstance(rates_data, list):
@@ -69,16 +81,12 @@ async def send_daily_update():
                         'price': float(rate.get('rate', 0)),
                         'change': float(rate.get('change24hPercent', 0))
                     }
-        
         if prices:
             message += "*Market Prices (AUD):*\n"
             for coin in sorted(prices.keys()):
                 p = prices[coin]
                 emoji = "🟢" if p['change'] >= 0 else "🔴"
-                if p['price'] > 1000:
-                    price_str = f"${p['price']:,.2f}"
-                else:
-                    price_str = f"${p['price']:.2f}"
+                price_str = f"${p['price']:,.2f}" if p['price'] > 1000 else f"${p['price']:.2f}"
                 message += f"{emoji} *{coin}*: {price_str} ({p['change']:+.2f}%)\n"
             message += f"\n📈 {len(prices)} coins"
     
