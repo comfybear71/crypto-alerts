@@ -6,42 +6,50 @@ from telegram import Bot
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-SWYFTX_ACCESS_TOKEN = os.getenv('SWYFTX_ACCESS_TOKEN', '').strip()
+SWYFTX_API_KEY = os.getenv('SWYFTX_API_KEY', '').strip()
 
 async def get_portfolio():
-    """Get portfolio using access token directly"""
-    if not SWYFTX_ACCESS_TOKEN:
-        print("No access token found")
+    """Try API key as Bearer token"""
+    if not SWYFTX_API_KEY:
         return None
     
-    # Try different endpoints
     endpoints = [
         "https://api.swyftx.com.au/portfolio/",
         "https://api.swyftx.com.au/account/balance/",
-        "https://api.swyftx.com.au/portfolio/balance/"
     ]
     
-    headers = {
-        "Authorization": f"Bearer {SWYFTX_ACCESS_TOKEN}",
+    # Try API Key as Bearer (some APIs support this)
+    headers_api_key = {
+        "Authorization": f"Bearer {SWYFTX_API_KEY}",
+        "User-Agent": "CryptoBot/1.0",
+        "Content-Type": "application/json"
+    }
+    
+    # Try with API-Key header (alternative)
+    headers_key_header = {
+        "API-Key": SWYFTX_API_KEY,
         "User-Agent": "CryptoBot/1.0",
         "Content-Type": "application/json"
     }
     
     for url in endpoints:
+        # Try Bearer first
         try:
-            print(f"Trying: {url}")
-            response = requests.get(url, headers=headers, timeout=10)
-            print(f"Status: {response.status_code}")
-            
+            response = requests.get(url, headers=headers_api_key, timeout=10)
+            print(f"{url} (Bearer): {response.status_code}")
             if response.status_code == 200:
                 return response.json()
-            elif response.status_code == 401:
-                print(f"Unauthorized - token may be expired")
-                print(f"Response: {response.text[:200]}")
-            else:
-                print(f"Error: {response.text[:200]}")
         except Exception as e:
-            print(f"Exception: {e}")
+            print(f"Bearer error: {e}")
+        
+        # Try API-Key header
+        try:
+            response = requests.get(url, headers=headers_key_header, timeout=10)
+            print(f"{url} (API-Key): {response.status_code}")
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            print(f"API-Key header error: {e}")
     
     return None
 
@@ -77,34 +85,22 @@ async def send_daily_update():
     if portfolio:
         message += "Swyftx Portfolio\n"
         
-        # Try different field names
         total = (portfolio.get('totalAudBalance') or 
-                portfolio.get('totalBalance') or 
-                portfolio.get('balance') or 0)
+                portfolio.get('totalBalance') or 0)
         
         message += f"Total: ${float(total):,.2f} AUD\n\n"
         
-        # Holdings
-        holdings = (portfolio.get('assets') or 
-                   portfolio.get('holdings') or 
-                   portfolio.get('balances') or [])
-        
+        holdings = portfolio.get('assets') or []
         if holdings:
             message += "Holdings:\n"
             for h in holdings[:10]:
-                asset = (h.get('asset') or h.get('code') or 
-                        h.get('symbol') or 'Unknown')
-                qty = float(h.get('balance') or h.get('quantity') or 0)
+                asset = h.get('asset') or h.get('code') or 'Unknown'
+                qty = float(h.get('balance') or 0)
                 if qty > 0:
                     message += f"• {asset}: {qty:.4f}\n"
             message += "\n"
     else:
-        message += "Portfolio: Not available"
-        if not SWYFTX_ACCESS_TOKEN:
-            message += " (no token)"
-        else:
-            message += " (token may be expired)"
-        message += "\n\n"
+        message += "Portfolio: Not available (API key auth failed)\n\n"
     
     # Market prices
     if prices:
@@ -122,11 +118,7 @@ async def send_daily_update():
                 price = float(p['aud'])
                 change = float(p.get('aud_24h_change', 0))
                 
-                if price > 1000:
-                    price_str = f"${price:,.2f}"
-                else:
-                    price_str = f"${price:.4f}"
-                
+                price_str = f"${price:,.2f}" if price > 1000 else f"${price:.4f}"
                 message += f"{symbol}: {price_str} ({change:+.2f}%)\n"
     
     await bot.send_message(chat_id=CHAT_ID, text=message)
