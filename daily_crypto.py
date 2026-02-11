@@ -10,44 +10,52 @@ API_KEY = "5QWI1sDraKpbnDWDDVBsyU4x68jA33pj6HYli50WTGXiW"
 async def test_swyftx():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     
-    # First, get token
+    # Get token
     auth_url = "https://api.swyftx.com.au/auth/refresh/"
     auth_response = requests.post(auth_url, json={"apiKey": API_KEY}, headers={"Content-Type": "application/json"})
     token = auth_response.json().get("accessToken")
     
-    message = "Swyftx Portfolio Test\n\n"
-    message += f"✅ Auth Success\n"
-    message += f"Token: {token[:30]}...\n\n"
+    message = "Swyftx Balance Test\n\n"
     
-    # Try different portfolio endpoints
-    endpoints = [
-        "https://api.swyftx.com.au/portfolio/",
-        "https://api.swyftx.com.au/portfolio/balance/",
-        "https://api.swyftx.com.au/account/balance/",
-        "https://api.swyftx.com.au/user/balance/",
-        "https://api.swyftx.com.au/wallet/balance/",
-    ]
-    
+    # Get balance
+    balance_url = "https://api.swyftx.com.au/user/balance/"
     headers = {"Authorization": f"Bearer {token}"}
     
-    for url in endpoints:
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            message += f"{url.split('/')[-2]}/: {response.status_code}\n"
+    try:
+        response = requests.get(balance_url, headers=headers, timeout=10)
+        message += f"Status: {response.status_code}\n\n"
+        
+        if response.status_code == 200:
+            data = response.json()
+            message += f"Data type: {type(data)}\n"
             
-            if response.status_code == 200:
-                data = response.json()
-                message += f"✅ SUCCESS! Keys: {list(data.keys())[:5]}\n"
+            if isinstance(data, list):
+                message += f"Items: {len(data)}\n\n"
+                message += "Your Balances:\n"
                 
-                # Try to get balance
-                total = (data.get('totalAudBalance') or 
-                        data.get('totalBalance') or 
-                        data.get('balance') or 
-                        data.get('audBalance') or 0)
-                message += f"Total: ${float(total):,.2f} AUD\n\n"
-                break
-        except Exception as e:
-            message += f"Error: {str(e)[:50]}\n"
+                total_aud = 0
+                for item in data[:10]:  # First 10 items
+                    if isinstance(item, dict):
+                        asset = item.get('asset') or item.get('code') or item.get('symbol') or 'Unknown'
+                        qty = float(item.get('balance') or item.get('quantity') or item.get('amount') or 0)
+                        aud_value = float(item.get('audValue') or item.get('value') or item.get('aud') or 0)
+                        
+                        if qty > 0:
+                            message += f"• {asset}: {qty:.4f} (${aud_value:,.2f} AUD)\n"
+                            total_aud += aud_value
+                
+                message += f"\nTotal Value: ${total_aud:,.2f} AUD"
+                
+            elif isinstance(data, dict):
+                message += f"Keys: {list(data.keys())}\n"
+                message += f"Data: {str(data)[:300]}"
+        else:
+            message += f"Error: {response.text[:200]}"
+            
+    except Exception as e:
+        message += f"Exception: {str(e)}"
+        import traceback
+        message += f"\n{traceback.format_exc()[:500]}"
     
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
