@@ -21,14 +21,13 @@ async def send_daily_update():
     token = auth_response.json().get("accessToken")
     headers = {"Authorization": f"Bearer {token}"}
     
-    # First, fetch all assets to get ID-to-name mapping
+    # Get asset mapping
     assets_response = requests.get(
         "https://api.swyftx.com.au/markets/assets/",
         headers=headers,
         timeout=10
     )
     
-    # Build ID to name mapping from API
     asset_map = {}
     if assets_response.status_code == 200:
         assets = assets_response.json()
@@ -47,38 +46,40 @@ async def send_daily_update():
     )
     balances = balance_response.json()
     
-    # Get prices
-    prices = {}
+    # Get prices and 24h change from Swyftx
+    price_data = {}  # asset_id -> {rate, change24h}
     try:
         rates_response = requests.get(
             "https://api.swyftx.com.au/markets/live-rates/AUD/",
             headers=headers,
             timeout=10
         )
+        
         if rates_response.status_code == 200:
             rates_data = rates_response.json()
+            
             if isinstance(rates_data, list):
                 for item in rates_data:
                     if isinstance(item, dict):
-                        asset_id = item.get('assetId')
-                        rate = item.get('rate')
+                        asset_id = item.get('assetId') or item.get('id')
+                        rate = item.get('rate') or item.get('price')
+                        change24h = item.get('change24h') or item.get('change24hPercent') or item.get('percentChange24h')
+                        
                         if asset_id and rate:
-                            prices[asset_id] = float(rate)
+                            price_data[asset_id] = {
+                                'rate': float(rate),
+                                'change24h': float(change24h) if change24h else 0
+                            }
     except Exception as e:
-        print(f"Price error: {e}")
+        print(f"Price fetch error: {e}")
     
     # Build message
     message = f"📊 Daily Crypto Update\n"
     message += f"⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
     
-    # Show first 10 asset mappings for debugging
-    message += "Asset ID Mapping (first 10):\n"
-    for i, (aid, code) in enumerate(list(asset_map.items())[:10]):
-        message += f"ID {aid}: {code}\n"
-    message += "\n"
-    
     # Calculate portfolio
     total_aud = 0
+    total_change_24h = 0  # Weighted 24h change
     holdings = []
     
     for item in balances:
@@ -86,21 +87,35 @@ async def send_daily_update():
         balance = float(item.get('availableBalance', 0))
         
         if balance > 0:
-            name = asset_map.get(asset_id, f"ID_{asset_id}")
+            code = asset_map.get(asset_id, f"ID_{asset_id}")
             
+            # Get price and 24h change
             aud_value = 0
-            if asset_id in prices:
-                aud_value = balance * prices[asset_id]
+            change_24h = 0
+            
+            if code == 'AUD':
+                aud_value = balance
+                change_24h = 0
+            elif asset_id in price_data:
+                aud_value = balance * price_data[asset_id]['rate']
+                change_24h = price_data[asset_id]['change24h']
             
             total_aud += aud_value
-            holdings.append((name, balance, aud_value, asset_id))
+            if aud_value > 0:
+                total_change_24h += (aud_value * change_24h / 100)  # Convert % to absolute
+            
+            holdings.append((code, balance, aud_value, change_24h))
+    
+    # Calculate overall portfolio 24h change %
+    portfolio_change_pct = (total_change_24h / total_aud * 100) if total_aud > 0 else 0
     
     # Sort by value
     holdings.sort(key=lambda x: x[2], reverse=True)
     
-    # Display
-    message += "💰 Your Portfolio:\n\n"
-    for name, qty, value, aid in holdings[:15]:
+    # Display portfolio
+    message += "💰 Your Swyftx Portfolio:\n\n"
+    for code, qty, value, change in holdings:
+        # Format value
         if value > 1000:
             value_str = f"${value:,.0f}"
         elif value > 1:
@@ -108,6 +123,7 @@ async def send_daily_update():
         else:
             value_str = f"${value:.4f}"
         
+        # Format quantity
         if qty < 0.01:
             qty_str = f"{qty:.8f}"
         elif qty < 1:
@@ -117,9 +133,15 @@ async def send_daily_update():
         else:
             qty_str = f"{qty:.0f}"
         
-        message += f"• {name} (ID:{aid}): {qty_str} ({value_str})\n"
+        # Format 24h change with emoji
+        emoji = "🟢" if change >= 0 else "🔴"
+        
+        message += f"• {code}: {qty_str} ({value_str}) {emoji} {change:+.2f}%\n"
     
+    # Overall portfolio change
+    portfolio_emoji = "🟢" if portfolio_change_pct >= 0 else "🔴"
     message += f"\n💵 Total: ${total_aud:,.2f} AUD"
+    message += f"\n📈 24h Change: {portfolio_emoji} {portfolio_change_pct:+.2f}%"
     
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
