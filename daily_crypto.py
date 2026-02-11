@@ -6,35 +6,12 @@ from telegram import Bot
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-SWYFTX_API_KEY = os.getenv('SWYFTX_API_KEY', '').strip()
+SWYFTX_ACCESS_TOKEN = os.getenv('SWYFTX_ACCESS_TOKEN', '').strip()
 
-async def get_swyftx_token():
-    """Get JWT token from API key"""
-    if not SWYFTX_API_KEY:
-        return None
-    
-    url = "https://api.swyftx.com.au/auth/refresh/"
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "CryptoBot/1.0"
-    }
-    payload = {"apiKey": SWYFTX_API_KEY}
-    
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        print(f"Auth status: {response.status_code}")
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("accessToken")
-        else:
-            print(f"Auth error: {response.text[:200]}")
-    except Exception as e:
-        print(f"Auth exception: {e}")
-    return None
-
-async def get_portfolio(token):
-    """Try multiple portfolio endpoints"""
-    if not token:
+async def get_portfolio():
+    """Get portfolio using access token directly"""
+    if not SWYFTX_ACCESS_TOKEN:
+        print("No access token found")
         return None
     
     # Try different endpoints
@@ -45,7 +22,7 @@ async def get_portfolio(token):
     ]
     
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {SWYFTX_ACCESS_TOKEN}",
         "User-Agent": "CryptoBot/1.0",
         "Content-Type": "application/json"
     }
@@ -55,12 +32,16 @@ async def get_portfolio(token):
             print(f"Trying: {url}")
             response = requests.get(url, headers=headers, timeout=10)
             print(f"Status: {response.status_code}")
+            
             if response.status_code == 200:
                 return response.json()
-            else:
+            elif response.status_code == 401:
+                print(f"Unauthorized - token may be expired")
                 print(f"Response: {response.text[:200]}")
+            else:
+                print(f"Error: {response.text[:200]}")
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Exception: {e}")
     
     return None
 
@@ -82,9 +63,8 @@ async def get_prices():
 async def send_daily_update():
     bot = Bot(token=TELEGRAM_TOKEN)
     
-    # Get Swyftx data
-    token = await get_swyftx_token()
-    portfolio = await get_portfolio(token) if token else None
+    # Get Swyftx portfolio
+    portfolio = await get_portfolio()
     
     # Get prices
     prices = await get_prices()
@@ -119,10 +99,12 @@ async def send_daily_update():
                     message += f"• {asset}: {qty:.4f}\n"
             message += "\n"
     else:
-        message += "Portfolio: Not available\n"
-        if not token:
-            message += "(Auth failed - check API key)\n"
-        message += "\n"
+        message += "Portfolio: Not available"
+        if not SWYFTX_ACCESS_TOKEN:
+            message += " (no token)"
+        else:
+            message += " (token may be expired)"
+        message += "\n\n"
     
     # Market prices
     if prices:
