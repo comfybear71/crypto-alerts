@@ -4,87 +4,108 @@ import asyncio
 from datetime import datetime
 from telegram import Bot
 
-# Get secrets
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '') or os.getenv('TELEGRAM_TOKEN', '')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '') or os.getenv('CHAT_ID', '')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 SWYFTX_API_KEY = os.getenv('SWYFTX_API_KEY', '')
 
+# Asset ID to name mapping (update with your coins)
+ASSET_MAP = {
+    1: 'BTC', 2: 'ETH', 3: 'XRP', 5: 'LTC', 6: 'ADA', 
+    10: 'SOL', 12: 'DOGE', 73: 'SUI', 130: 'LUNA', 
+    405: 'ENA', 407: 'USDC', 438: 'NEXO', 496: 'POL', 
+    569: 'XAUT', 635: 'XTZ'
+}
+
 async def send_daily_update():
-    # Debug: Check secrets
-    debug_info = []
-    debug_info.append(f"TELEGRAM_BOT_TOKEN exists: {bool(TELEGRAM_BOT_TOKEN)}")
-    debug_info.append(f"TELEGRAM_CHAT_ID exists: {bool(TELEGRAM_CHAT_ID)}")
-    debug_info.append(f"SWYFTX_API_KEY exists: {bool(SWYFTX_API_KEY)}")
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
     
-    # Try to init bot
-    try:
-        bot = Bot(token=TELEGRAM_BOT_TOKEN)
-        debug_info.append("Bot initialized OK")
-    except Exception as e:
-        debug_info.append(f"Bot init error: {str(e)}")
-        # Print to GitHub logs
-        print("\n".join(debug_info))
-        return
+    message = f"📊 Daily Crypto Update\n"
+    message += f"⏰ {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
     
-    # Build message
-    message = "Daily Crypto Update\n"
-    message += f"Time: {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
-    message += "Debug Info:\n" + "\n".join(debug_info) + "\n\n"
+    # Get Swyftx data
+    auth_response = requests.post(
+        "https://api.swyftx.com.au/auth/refresh/",
+        json={"apiKey": SWYFTX_API_KEY},
+        headers={"Content-Type": "application/json"},
+        timeout=10
+    )
+    token = auth_response.json().get("accessToken")
     
-    # Try Swyftx
-    if SWYFTX_API_KEY:
-        try:
-            auth_response = requests.post(
-                "https://api.swyftx.com.au/auth/refresh/",
-                json={"apiKey": SWYFTX_API_KEY},
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-            message += f"Swyftx auth: {auth_response.status_code}\n"
-            
-            if auth_response.status_code == 200:
-                token = auth_response.json().get("accessToken")
-                balance_response = requests.get(
-                    "https://api.swyftx.com.au/user/balance/",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=10
-                )
-                message += f"Swyftx balance: {balance_response.status_code}\n"
-                if balance_response.status_code == 200:
-                    balances = balance_response.json()
-                    message += f"Assets: {len(balances)}\n"
-        except Exception as e:
-            message += f"Swyftx error: {str(e)[:100]}\n"
-    else:
-        message += "No Swyftx API key\n"
+    balance_response = requests.get(
+        "https://api.swyftx.com.au/user/balance/",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10
+    )
+    balances = balance_response.json()
     
-    message += "\n"
+    # Get CoinGecko prices
+    coins = ['bitcoin', 'ethereum', 'solana', 'ripple', 'cardano', 'dogecoin',
+             'litecoin', 'sui', 'terra-luna', 'ethena', 'usd-coin', 'nexo',
+             'polygon-ecosystem-token', 'tether-gold', 'tezos']
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(coins)}&vs_currencies=aud"
+    prices = requests.get(url, timeout=10).json()
     
-    # Get prices
-    try:
-        coins = ['bitcoin', 'ethereum', 'solana', 'ripple', 'cardano']
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(coins)}&vs_currencies=aud"
-        response = requests.get(url, timeout=10)
+    # Map CoinGecko IDs
+    CG_MAP = {
+        'BTC': 'bitcoin', 'ETH': 'ethereum', 'SOL': 'solana', 'XRP': 'ripple',
+        'ADA': 'cardano', 'DOGE': 'dogecoin', 'LTC': 'litecoin', 'SUI': 'sui',
+        'LUNA': 'terra-luna', 'ENA': 'ethena', 'USDC': 'usd-coin', 'NEXO': 'nexo',
+        'POL': 'polygon-ecosystem-token', 'XAUT': 'tether-gold', 'XTZ': 'tezos'
+    }
+    
+    # Calculate portfolio
+    total_aud = 0
+    holdings = []
+    
+    for item in balances:
+        asset_id = item.get('assetId')
+        balance = float(item.get('availableBalance', 0))
         
-        if response.status_code == 200:
-            prices = response.json()
-            message += "Prices:\n"
-            for coin in coins:
-                if coin in prices:
-                    price = prices[coin]['aud']
-                    message += f"{coin.upper()}: ${price:,.2f}\n"
-        else:
-            message += f"Price API error: {response.status_code}\n"
-    except Exception as e:
-        message += f"Price error: {str(e)[:100]}"
+        if balance > 0:
+            name = ASSET_MAP.get(asset_id, f"ID_{asset_id}")
+            cg_id = CG_MAP.get(name)
+            
+            aud_value = 0
+            if cg_id and cg_id in prices:
+                price = prices[cg_id]['aud']
+                aud_value = balance * price
+            
+            total_aud += aud_value
+            holdings.append((name, balance, aud_value))
     
-    # Send to Telegram
-    try:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-        print("SUCCESS: Message sent to Telegram")
-    except Exception as e:
-        print(f"FAILED to send: {str(e)}")
-        print(f"Message was:\n{message}")
+    # Sort by value
+    holdings.sort(key=lambda x: x[2], reverse=True)
+    
+    # Display top 10
+    message += "💰 Your Portfolio:\n\n"
+    for name, qty, value in holdings[:10]:
+        if value > 1000:
+            value_str = f"${value:,.0f}"
+        elif value > 1:
+            value_str = f"${value:.2f}"
+        else:
+            value_str = f"${value:.4f}"
+        
+        if qty < 1:
+            qty_str = f"{qty:.6f}"
+        elif qty < 1000:
+            qty_str = f"{qty:.2f}"
+        else:
+            qty_str = f"{qty:.0f}"
+        
+        message += f"• {name}: {qty_str} ({value_str})\n"
+    
+    message += f"\n💵 Total: ${total_aud:,.2f} AUD\n\n"
+    
+    # Market prices
+    message += "📈 Market Prices:\n"
+    for symbol, cg_id in [('BTC', 'bitcoin'), ('ETH', 'ethereum'), ('SOL', 'solana'), 
+                          ('XRP', 'ripple'), ('ADA', 'cardano')]:
+        if cg_id in prices:
+            price = prices[cg_id]['aud']
+            message += f"• {symbol}: ${price:,.2f}\n"
+    
+    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
 if __name__ == "__main__":
     asyncio.run(send_daily_update())
