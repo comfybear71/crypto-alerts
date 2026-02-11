@@ -7,44 +7,56 @@ from telegram import Bot
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
+# Coins to track
+COINS = ['bitcoin', 'ethereum', 'solana', 'ripple', 'cardano', 'polkadot', 'matic', 'chainlink', 'uniswap', 'litecoin']
+
 async def send_daily_update():
     bot = Bot(token=TELEGRAM_TOKEN)
     
-    # Try to get prices
+    # Try CoinGecko API (free, no auth needed)
     prices = {}
     try:
-        response = requests.get("https://api.swyftx.com.au/markets/live-rates/AUD/", timeout=10)
+        # Get prices from CoinGecko
+        ids = ','.join(COINS)
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=aud&include_24hr_change=true"
+        response = requests.get(url, timeout=10)
+        
         if response.status_code == 200:
             data = response.json()
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        coin = item.get('asset') or item.get('code')
-                        if coin:
-                            prices[coin] = {
-                                'price': item.get('rate', 0),
-                                'change': item.get('change24hPercent', 0)
-                            }
+            for coin in COINS:
+                if coin in data:
+                    prices[coin.upper()] = {
+                        'price': data[coin]['aud'],
+                        'change': data[coin].get('aud_24h_change', 0)
+                    }
+        else:
+            print(f"CoinGecko error: {response.status_code}")
     except Exception as e:
         print(f"Error: {e}")
     
-    # Build simple message (no markdown)
+    # Build message
     message = f"Daily Crypto Update\n"
     message += f"Time: {datetime.now().strftime('%d %b %Y %H:%M')}\n\n"
     
     if prices:
         message += "Market Prices (AUD):\n"
-        # Just show first 10 coins
-        for coin in list(prices.keys())[:10]:
+        for coin in sorted(prices.keys()):
             p = prices[coin]
             price = float(p['price'])
             change = float(p['change'])
-            message += f"{coin}: ${price:.2f} ({change:+.2f}%)\n"
-        message += f"\nTotal coins: {len(prices)}"
+            
+            if price > 1000:
+                price_str = f"${price:,.2f}"
+            else:
+                price_str = f"${price:.4f}"
+            
+            message += f"{coin}: {price_str} ({change:+.2f}%)\n"
+        
+        message += f"\n{len(prices)} coins tracked"
     else:
-        message += "Could not fetch prices"
+        message += "Could not fetch prices. API may be rate limited."
+        message += "\nTry again in a few minutes."
     
-    # Send without markdown parsing
     await bot.send_message(chat_id=CHAT_ID, text=message)
 
 if __name__ == "__main__":
