@@ -15,7 +15,7 @@ async def test_auth():
     
     # Check if API key exists
     if not SWYFTX_API_KEY:
-        return False, ["No API key found in secrets"]
+        return False, debug_info, None  # Return 3 values
     
     debug_info.append(f"API Key found: {SWYFTX_API_KEY[:15]}... (length: {len(SWYFTX_API_KEY)})")
     
@@ -34,18 +34,18 @@ async def test_auth():
             data = response.json()
             token = data.get("accessToken")
             if token:
-                debug_info.append("✓ Token acquired!")
-                return True, debug_info, token
+                debug_info.append("Token acquired!")
+                return True, debug_info, token  # Return 3 values
             else:
-                debug_info.append("✗ No accessToken in response")
-                debug_info.append(f"Keys found: {list(data.keys())}")
+                debug_info.append("No accessToken in response")
+                debug_info.append(f"Keys: {list(data.keys())}")
+                return False, debug_info, None  # Return 3 values
         else:
-            debug_info.append(f"✗ Auth failed with status {response.status_code}")
+            debug_info.append(f"Auth failed: {response.status_code}")
+            return False, debug_info, None  # Return 3 values
     except Exception as e:
-        debug_info.append(f"✗ Exception: {str(e)}")
-        debug_info.append(traceback.format_exc()[:500])
-    
-    return False, debug_info, None
+        debug_info.append(f"Exception: {str(e)}")
+        return False, debug_info, None  # Return 3 values
 
 async def get_prices():
     """Get prices from CoinGecko"""
@@ -65,7 +65,7 @@ async def get_prices():
 async def send_daily_update():
     bot = Bot(token=TELEGRAM_TOKEN)
     
-    # Test auth and get debug info
+    # Test auth and get debug info (now expects 3 values)
     auth_success, debug_info, token = await test_auth()
     
     # Get prices
@@ -84,7 +84,6 @@ async def send_daily_update():
     # If auth succeeded, try to get portfolio
     if auth_success and token:
         message += "Auth: SUCCESS\n"
-        # Try portfolio with token
         try:
             headers = {"Authorization": f"Bearer {token}"}
             response = requests.get("https://api.swyftx.com.au/portfolio/", headers=headers, timeout=10)
@@ -121,13 +120,7 @@ async def send_daily_update():
                 price_str = f"${price:,.2f}" if price > 1000 else f"${price:.4f}"
                 message += f"{symbol}: {price_str} ({change:+.2f}%)\n"
     
-    # Split message if too long
-    if len(message) > 4000:
-        parts = [message[i:i+4000] for i in range(0, len(message), 4000)]
-        for i, part in enumerate(parts):
-            await bot.send_message(chat_id=CHAT_ID, text=f"Part {i+1}:\n{part}")
-    else:
-        await bot.send_message(chat_id=CHAT_ID, text=message)
+    await bot.send_message(chat_id=CHAT_ID, text=message)
 
 if __name__ == "__main__":
     asyncio.run(send_daily_update())
